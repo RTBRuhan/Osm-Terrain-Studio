@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="OSM Terrain Studio sample">
+  <bounds minlat="51.4980" minlon="-0.1400" maxlat="51.5170" maxlon="-0.1150"/>
+  <!-- A few nodes forming two crossing roads and a building near Westminster. -->
+  <node id="1" lat="51.5000" lon="-0.1380"/>
+  <node id="2" lat="51.5050" lon="-0.1300"/>
+  <node id="3" lat="51.5090" lon="-0.1240"/>
+  <node id="4" lat="51.5140" lon="-0.1180"/>
+  <node id="5" lat="51.5140" lon="-0.1360"/>
+  <node id="6" lat="51.5090" lon="-0.1300"/>
+  <node id="7" lat="51.5040" lon="-0.1230"/>
+  <node id="8" lat="51.4990" lon="-0.1170"/>
+  <node id="20" lat="51.5078" lon="-0.1290"/>
+  <node id="21" lat="51.5082" lon="-0.1290"/>
+  <node id="22" lat="51.5082" lon="-0.1282"/>
+  <node id="23" lat="51.5078" lon="-0.1282"/>
+  <node id="30" lat="51.5060" lon="-0.1275">
+    <tag k="amenity" v="cafe"/>
+    <tag k="name" v="Corner Cafe"/>
+  </node>
+  <way id="100">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <nd ref="4"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Diagonal Avenue"/>
+    <tag k="lanes" v="4"/>
+  </way>
+  <way id="101">
+    <nd ref="5"/>
+    <nd ref="6"/>
+    <nd ref="7"/>
+    <nd ref="8"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Cross Street"/>
+  </way>
+  <way id="200">
+    <nd ref="20"/>
+    <nd ref="21"/>
+    <nd ref="22"/>
+    <nd ref="23"/>
+    <nd ref="20"/>
+    <tag k="building" v="yes"/>
+    <tag k="name" v="Sample Hall"/>
+  </way>
+</osm>

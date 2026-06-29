@@ -1,0 +1,80 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  @apply bg-panel text-slate-200 font-sans antialiased;
+  overflow: hidden;
+}
+
+/* Thin custom scrollbars for the side panels */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  @apply bg-edge rounded-full;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* MapLibre control restyle to fit the dark theme */
+.maplibregl-ctrl-group {
+  @apply !bg-panel-2 !border !border-edge !shadow-lg;
+}
+.maplibregl-ctrl-group button + button {
+  @apply !border-t !border-edge;
+}
+.maplibregl-ctrl button .maplibregl-ctrl-icon {
+  filter: invert(0.85);
+}
+.maplibregl-ctrl-attrib {
+  @apply !bg-panel-2/80 !text-slate-400;
+}
+.maplibregl-ctrl-attrib a {
+  @apply !text-slate-300;
+}
+
+@layer components {
+  .field-label {
+    @apply text-[11px] font-medium uppercase tracking-wider text-slate-400;
+  }
+  .input {
+    @apply w-full rounded-md border border-edge bg-panel px-2.5 py-1.5 text-sm text-slate-100
+      outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40
+      placeholder:text-slate-500;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-edge
+      bg-panel-3 px-3 py-1.5 text-sm font-medium text-slate-200 transition
+      hover:border-accent/60 hover:bg-panel-3/70 active:scale-[0.98]
+      disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply border-accent/40 bg-accent/15 text-accent hover:bg-accent/25 hover:border-accent;
+  }
+  .btn-ghost {
+    @apply border-transparent bg-transparent hover:bg-panel-3;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-edge bg-panel px-2 py-0.5
+      text-[11px] text-slate-300;
+  }
+  .section {
+    @apply border-b border-edge/70;
+  }
+}
