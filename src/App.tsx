@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import MapView, { type MapHandle } from "./components/MapView";
 import Sidebar from "./components/Sidebar";
 import Toolbar from "./components/Toolbar";
 import StatusToast from "./components/StatusToast";
+import HelpButton from "./components/HelpButton";
 import { useStore } from "./store";
 
 const LEGEND: { label: string; color: string }[] = [
@@ -36,7 +37,99 @@ export default function App() {
   const mapRef = useRef<MapHandle>(null);
   const [mapBearing, setMapBearing] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const loadOsmText = useStore((s) => s.loadOsmText);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const s = useStore.getState();
+      switch (e.key) {
+        case "Escape":
+          if (s.tool === "measure") {
+            s.clearMeasure();
+            s.setTool("pan");
+          } else if (s.tool !== "pan") {
+            s.setTool("pan");
+          } else if (s.selection) {
+            s.select(null);
+          } else {
+            setHelpOpen(false);
+          }
+          break;
+        case "v":
+        case "V":
+          s.setTool("pan");
+          break;
+        case "d":
+        case "D":
+          s.setTool("draw");
+          break;
+        case "f":
+        case "F":
+          s.setTool("freedraw");
+          break;
+        case "m":
+        case "M":
+          s.setTool("measure");
+          break;
+        case "b":
+        case "B":
+          s.setBoxVisible(!s.boxVisible);
+          break;
+        case "z":
+        case "Z":
+          s.focusOnBox();
+          break;
+        case "r":
+        case "R":
+          mapRef.current?.resetNorth();
+          break;
+        case "[":
+          s.updateBox({ bearingDeg: (s.box.bearingDeg + 359) % 360 });
+          break;
+        case "]":
+          s.updateBox({ bearingDeg: (s.box.bearingDeg + 1) % 360 });
+          break;
+        case "Delete":
+        case "Backspace":
+          if (s.selection) {
+            e.preventDefault();
+            s.deleteSelected();
+          }
+          break;
+        case "1":
+          s.setBasemap("dark");
+          break;
+        case "2":
+          s.setBasemap("light");
+          break;
+        case "3":
+          s.setBasemap("streets");
+          break;
+        case "4":
+          s.setBasemap("satellite");
+          break;
+        case "?":
+          setHelpOpen(true);
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -66,6 +159,7 @@ export default function App() {
           mapBearing={mapBearing}
           onResetNorth={() => mapRef.current?.resetNorth()}
         />
+        <HelpButton open={helpOpen} setOpen={setHelpOpen} />
         <Legend />
         <StatusToast />
         {dragOver && (

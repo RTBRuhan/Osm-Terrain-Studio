@@ -29,28 +29,57 @@ export interface FetchResult {
   endpoint: string;
 }
 
-export async function fetchOverpassBbox(b: OsmBounds): Promise<FetchResult> {
+/** Per-endpoint request timeout. Without this, a stalled mirror would hang the
+ *  fetch indefinitely (the bug where it "kept loading"). */
+const ENDPOINT_TIMEOUT_MS = 45_000;
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+export async function fetchOverpassBbox(
+  b: OsmBounds,
+  onProgress?: (msg: string) => void,
+): Promise<FetchResult> {
   const query = buildOverpassQuery(b);
   let lastError: unknown = null;
-  for (const endpoint of ENDPOINTS) {
+
+  for (let i = 0; i < ENDPOINTS.length; i++) {
+    const endpoint = ENDPOINTS[i];
+    onProgress?.(
+      `Fetching from ${hostOf(endpoint)} (${i + 1}/${ENDPOINTS.length})…`,
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ENDPOINT_TIMEOUT_MS);
     try {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "data=" + encodeURIComponent(query),
+        signal: controller.signal,
       });
       if (!res.ok) {
-        lastError = new Error(`${endpoint} responded ${res.status}`);
+        // 429 / 504 are common when a mirror is busy – try the next one.
+        lastError = new Error(`${hostOf(endpoint)} responded ${res.status}`);
         continue;
       }
       const xml = await res.text();
       if (!xml.includes("<osm")) {
-        lastError = new Error("Unexpected response from Overpass.");
+        lastError = new Error(`Unexpected response from ${hostOf(endpoint)}.`);
         continue;
       }
       return { xml, endpoint };
     } catch (err) {
-      lastError = err;
+      lastError =
+        err instanceof DOMException && err.name === "AbortError"
+          ? new Error(`${hostOf(endpoint)} timed out`)
+          : err;
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastError instanceof Error

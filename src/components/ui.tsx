@@ -1,30 +1,67 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 export function Section({
   title,
   subtitle,
   children,
   right,
+  defaultOpen = true,
+  collapsible = true,
+  badge,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   right?: ReactNode;
+  defaultOpen?: boolean;
+  collapsible?: boolean;
+  badge?: ReactNode;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const isOpen = collapsible ? open : true;
+
   return (
-    <section className="section px-4 py-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
+    <section className="section">
+      <div className="flex items-center justify-between gap-2 px-4 py-3">
+        <button
+          className="flex flex-1 items-center gap-2 text-left"
+          onClick={() => collapsible && setOpen((v) => !v)}
+          disabled={!collapsible}
+        >
+          {collapsible && (
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform ${
+                isOpen ? "rotate-90" : ""
+              }`}
+              fill="none"
+            >
+              <path
+                d="M9 6l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+          <span className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-100">{title}</span>
+            {badge}
+          </span>
+        </button>
+        {right}
+      </div>
+      {isOpen && (
+        <div className="px-4 pb-4">
           {subtitle && (
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+            <p className="-mt-1 mb-3 text-[11px] leading-snug text-slate-500">
               {subtitle}
             </p>
           )}
+          <div className="space-y-3">{children}</div>
         </div>
-        {right}
-      </div>
-      <div className="space-y-3">{children}</div>
+      )}
     </section>
   );
 }

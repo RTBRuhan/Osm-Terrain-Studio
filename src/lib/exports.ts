@@ -1,14 +1,16 @@
 /**
  * Export pipeline: clip OSM data to the georeferenced box, then emit it in the
- * formats people actually need – standard OSM/GeoJSON for GIS tools, and
- * terrain-local metre coordinates for game engines (Unity / EasyRoad3D).
+ * formats people actually need – standard OSM/GeoJSON for GIS tools, plus
+ * local metre coordinates (CSV / GeoJSON) for CAD, 3D and engine workflows.
  */
 import {
   BoxFrame,
   clipPolygon,
   clipPolyline,
   pointInRect,
+  pointInRing,
   type Box,
+  type LatLon,
   type LocalXZ,
   type Rect,
 } from "./geo";
@@ -110,43 +112,50 @@ export function clipOsmToBox(data: OsmData, box: Box): ClipResult {
 }
 
 // ---------------------------------------------------------------------------
-// Road helpers
+// Freehand-polygon clipping (a looser, geometry-preserving clip used for the
+// freehand selection region – keeps any way that touches the region intact).
 // ---------------------------------------------------------------------------
 
-const ROAD_DEFAULT_WIDTH: Record<string, number> = {
-  motorway: 14,
-  trunk: 12,
-  primary: 10,
-  secondary: 9,
-  tertiary: 8,
-  residential: 6,
-  service: 4,
-  unclassified: 6,
-  living_street: 5,
-  track: 3.5,
-  footway: 1.8,
-  path: 1.2,
-  cycleway: 2,
-  pedestrian: 4,
-};
+export function clipOsmToPolygon(data: OsmData, ring: LatLon[]): OsmData {
+  const out = emptyOsm();
+  if (ring.length < 3) return out;
 
-/** Estimate carriageway width (m) from tags – lanes win, else a per-class default. */
-export function estimateRoadWidth(tags: Tags): number {
-  if (tags.width) {
-    const w = parseFloat(tags.width);
-    if (Number.isFinite(w)) return w;
-  }
-  const lanes = tags.lanes ? parseInt(tags.lanes, 10) : undefined;
-  if (lanes && Number.isFinite(lanes)) return lanes * 3.5;
-  return ROAD_DEFAULT_WIDTH[tags.highway ?? ""] ?? 5;
-}
+  const inside = (n: OsmNode) => pointInRing(n.lat, n.lon, ring);
 
-function polylineLength(points: LocalXZ[]): number {
-  let len = 0;
-  for (let i = 1; i < points.length; i++) {
-    len += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+  for (const way of data.ways.values()) {
+    const nodes = way.refs
+      .map((r) => data.nodes.get(r))
+      .filter((n): n is OsmNode => Boolean(n));
+    if (nodes.length === 0) continue;
+    if (!nodes.some(inside)) continue;
+    for (const n of nodes) {
+      if (!out.nodes.has(n.id)) out.nodes.set(n.id, { ...n, tags: { ...n.tags } });
+    }
+    out.ways.set(way.id, {
+      id: way.id,
+      refs: way.refs.slice(),
+      tags: { ...way.tags },
+    });
   }
-  return len;
+
+  for (const node of data.nodes.values()) {
+    if (Object.keys(node.tags).length === 0) continue;
+    if (out.nodes.has(node.id)) continue;
+    if (inside(node)) out.nodes.set(node.id, { ...node, tags: { ...node.tags } });
+  }
+
+  let minLat = Infinity;
+  let minLon = Infinity;
+  let maxLat = -Infinity;
+  let maxLon = -Infinity;
+  for (const p of ring) {
+    minLat = Math.min(minLat, p.lat);
+    maxLat = Math.max(maxLat, p.lat);
+    minLon = Math.min(minLon, p.lon);
+    maxLon = Math.max(maxLon, p.lon);
+  }
+  out.bounds = { minLat, minLon, maxLat, maxLon };
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,106 +184,6 @@ function wayIsExportableLine(tags: Tags, filter: RoadFilter): boolean {
       return _exhaustive;
     }
   }
-}
-
-export interface UnityRoad {
-  id: string;
-  name?: string;
-  highway?: string;
-  type?: string;
-  lanes?: number;
-  oneway: boolean;
-  width: number;
-  lengthMeters: number;
-  closed: boolean;
-  points: { x: number; z: number }[];
-}
-
-export interface UnityExport {
-  format: string;
-  generator: string;
-  generatedAt: string;
-  terrain: {
-    sizeXMeters: number;
-    sizeZMeters: number;
-    bearingDeg: number;
-    origin: { lat: number; lon: number; description: string };
-    center: { lat: number; lon: number };
-    axes: { x: string; z: string; up: string };
-    note: string;
-  };
-  summary: { roadCount: number; totalRoadLengthMeters: number };
-  roads: UnityRoad[];
-}
-
-/** Build the Unity / EasyRoad3D oriented road manifest from clipped data. */
-export function buildUnityExport(
-  data: OsmData,
-  box: Box,
-  filter: RoadFilter,
-): UnityExport {
-  const { clipped, frame } = clipOsmToBox(data, box);
-  const origin = frame.toLatLonFromLocal(0, 0);
-  const roads: UnityRoad[] = [];
-  let totalLen = 0;
-
-  for (const way of clipped.ways.values()) {
-    if (!wayIsExportableLine(way.tags, filter)) continue;
-    const pts: LocalXZ[] = [];
-    for (const ref of way.refs) {
-      const n = clipped.nodes.get(ref);
-      if (n) pts.push(frame.toLocal(n.lat, n.lon));
-    }
-    if (pts.length < 2) continue;
-    const len = polylineLength(pts);
-    totalLen += len;
-    const closed =
-      way.refs.length > 2 && way.refs[0] === way.refs[way.refs.length - 1];
-    roads.push({
-      id: way.id,
-      name: way.tags.name,
-      highway: way.tags.highway,
-      type: way.tags.highway ?? way.tags.railway ?? way.tags.waterway,
-      lanes: way.tags.lanes ? Number(way.tags.lanes) : undefined,
-      oneway: way.tags.oneway === "yes" || way.tags.oneway === "true",
-      width: estimateRoadWidth(way.tags),
-      lengthMeters: Math.round(len * 100) / 100,
-      closed,
-      points: pts.map((p) => ({
-        x: Math.round(p.x * 1000) / 1000,
-        z: Math.round(p.z * 1000) / 1000,
-      })),
-    });
-  }
-
-  return {
-    format: "osm-terrain-studio/unity-roads@1",
-    generator: "OSM Terrain Studio",
-    generatedAt: new Date().toISOString(),
-    terrain: {
-      sizeXMeters: box.widthM,
-      sizeZMeters: box.heightM,
-      bearingDeg: box.bearingDeg,
-      origin: {
-        lat: origin.lat,
-        lon: origin.lon,
-        description:
-          "Terrain-local origin (x=0, z=0). Place this at the Unity terrain's bottom-left/south-west corner.",
-      },
-      center: { lat: box.centerLat, lon: box.centerLon },
-      axes: {
-        x: "Unity X (east at bearing 0), metres",
-        z: "Unity Z (north at bearing 0), metres",
-        up: "Unity Y is up; sample terrain height at (x,z). Points are emitted with y omitted (treat as 0).",
-      },
-      note: "Coordinates are metres in the terrain's local frame after applying bearing rotation. Feed road points to EasyRoad3D as Vector3(x, terrainHeight(x,z), z).",
-    },
-    summary: {
-      roadCount: roads.length,
-      totalRoadLengthMeters: Math.round(totalLen * 100) / 100,
-    },
-    roads,
-  };
 }
 
 /** GeoJSON in terrain-local metres ([x, z] instead of [lon, lat]). */
@@ -371,16 +280,30 @@ export function buildClippedGeoJSON(data: OsmData, box: Box): unknown {
   return osmToGeoJSON(clipped);
 }
 
+/** The full, unclipped dataset as OSM XML (a "direct download" of what's loaded). */
+export function buildFullOsmXml(data: OsmData): string {
+  return serializeOsmXml(data, { bounds: data.bounds });
+}
+
+export function buildFullGeoJSON(data: OsmData): unknown {
+  return osmToGeoJSON(data);
+}
+
+/** OSM XML clipped to the freehand selection region. */
+export function buildRegionOsmXml(data: OsmData, ring: LatLon[]): string {
+  const clipped = clipOsmToPolygon(data, ring);
+  return serializeOsmXml(clipped, { bounds: clipped.bounds });
+}
+
+export function buildRegionGeoJSON(data: OsmData, ring: LatLon[]): unknown {
+  return osmToGeoJSON(clipOsmToPolygon(data, ring));
+}
+
 // ---------------------------------------------------------------------------
 // Download helper
 // ---------------------------------------------------------------------------
 
-export function downloadText(
-  filename: string,
-  text: string,
-  mime = "text/plain",
-): void {
-  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -389,4 +312,12 @@ export function downloadText(
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadText(
+  filename: string,
+  text: string,
+  mime = "text/plain",
+): void {
+  downloadBlob(filename, new Blob([text], { type: `${mime};charset=utf-8` }));
 }

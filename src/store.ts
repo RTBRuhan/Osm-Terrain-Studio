@@ -10,13 +10,14 @@ import {
   type OsmStats,
   type Tags,
 } from "./lib/osm";
-import type { Box } from "./lib/geo";
+import type { Box, LatLon } from "./lib/geo";
 import { metersPerDegLat, metersPerDegLon } from "./lib/geo";
 import type { BasemapId } from "./lib/basemaps";
 import { bboxAreaKm2, fetchOverpassBbox } from "./lib/overpass";
 import { BoxFrame } from "./lib/geo";
+import { decodeScene, type MapViewState } from "./lib/scene";
 
-export type Tool = "pan" | "draw";
+export type Tool = "pan" | "draw" | "freedraw" | "measure";
 
 export interface StatusState {
   kind: "idle" | "loading" | "error" | "info";
@@ -33,6 +34,11 @@ export interface FocusCommand {
   nonce: number;
 }
 
+export interface ViewCommand {
+  view: Partial<MapViewState>;
+  nonce: number;
+}
+
 interface AppState {
   data: OsmData | null;
   geojson: GeoJSONFeatureCollection | null;
@@ -44,6 +50,14 @@ interface AppState {
   tool: Tool;
   box: Box;
   boxVisible: boolean;
+  /** Optional freehand selection polygon (lat/lon ring), used as a clip mask. */
+  freehand: LatLon[] | null;
+  /** Polyline being measured (lat/lon vertices). */
+  measure: LatLon[];
+
+  /** Live map view, kept in sync from the map for the scene/share panel. */
+  view: MapViewState;
+  viewCommand: ViewCommand | null;
 
   selection: Selection | null;
   status: StatusState;
@@ -70,6 +84,17 @@ interface AppState {
   fitBoxToData: () => void;
   focusOnBox: () => void;
 
+  // freehand region
+  setFreehand: (ring: LatLon[] | null) => void;
+
+  // measurement
+  addMeasurePoint: (p: LatLon) => void;
+  clearMeasure: () => void;
+
+  // map view
+  setView: (view: MapViewState) => void;
+  commandView: (view: Partial<MapViewState>) => void;
+
   // selection / editing
   select: (sel: Selection | null) => void;
   updateSelectedTags: (tags: Tags) => void;
@@ -84,6 +109,23 @@ const DEFAULT_BOX: Box = {
   heightM: 5000,
   bearingDeg: 0,
 };
+
+// Restore state from a shared permalink (URL hash), if present.
+const INITIAL = (() => {
+  try {
+    return typeof window !== "undefined" ? decodeScene(window.location.hash) : null;
+  } catch {
+    return null;
+  }
+})();
+const INITIAL_BOX: Box = INITIAL?.box ?? DEFAULT_BOX;
+const INITIAL_VIEW: MapViewState = INITIAL?.view ?? {
+  lng: INITIAL_BOX.centerLon,
+  lat: INITIAL_BOX.centerLat,
+  zoom: 11,
+  bearing: 0,
+};
+const INITIAL_BASEMAP: BasemapId = INITIAL?.basemap ?? "light";
 
 function recompute(data: OsmData): {
   geojson: GeoJSONFeatureCollection;
@@ -103,10 +145,14 @@ export const useStore = create<AppState>((set, get) => ({
   dataVersion: 0,
   fileName: null,
 
-  basemap: "dark",
+  basemap: INITIAL_BASEMAP,
   tool: "pan",
-  box: DEFAULT_BOX,
+  box: INITIAL_BOX,
   boxVisible: true,
+  freehand: null,
+  measure: [],
+  view: INITIAL_VIEW,
+  viewCommand: null,
   selection: null,
   status: { kind: "idle" },
   focus: null,
@@ -170,7 +216,9 @@ export const useStore = create<AppState>((set, get) => ({
     }
     set({ status: { kind: "loading", message: "Fetching from Overpass…" } });
     try {
-      const { xml } = await fetchOverpassBbox(bounds);
+      const { xml } = await fetchOverpassBbox(bounds, (msg) =>
+        set({ status: { kind: "loading", message: msg } }),
+      );
       get().loadOsmText(xml, "overpass-download.osm");
     } catch (err) {
       set({
@@ -245,6 +293,20 @@ export const useStore = create<AppState>((set, get) => ({
       },
     }));
   },
+
+  setFreehand: (ring) =>
+    set({ freehand: ring && ring.length >= 3 ? ring : null }),
+
+  addMeasurePoint: (p) => set((s) => ({ measure: [...s.measure, p] })),
+  clearMeasure: () => set({ measure: [] }),
+
+  setView: (view) => set({ view }),
+  commandView: (view) =>
+    set((s) => ({
+      viewCommand: { view, nonce: Date.now() },
+      // keep the readable view in sync immediately for the panel
+      view: { ...s.view, ...view },
+    })),
 
   focusOnBox: () => {
     const { box } = get();

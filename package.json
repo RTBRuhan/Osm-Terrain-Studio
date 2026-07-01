@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Web tool to rotate OSM maps, draw/scale/rotate a georeferenced selection box, and export OSM/GeoJSON/Unity (EasyRoad3D) road data for game terrains.",
+  "description": "Browser tool to rotate OpenStreetMap data, draw/scale/rotate a georeferenced selection box, measure, and export OSM/GeoJSON/CSV vector data, satellite imagery and heightmaps for any area.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

@@ -3,15 +3,14 @@
  *
  * Everything here is built around a *local tangent plane* (ENU – East/North/Up)
  * approximation centred on a reference latitude/longitude. Over the few-kilometre
- * extents this tool targets (e.g. a 5 km × 10 km game terrain) the linearised
- * conversion below is accurate to well under a metre, which is far tighter than
- * OSM's own positional accuracy.
+ * extents this tool targets the linearised conversion below is accurate to well
+ * under a metre, which is far tighter than OSM's own positional accuracy.
  *
- * The "box" is a georeferenced rectangle that maps 1:1 onto a Unity terrain:
- *   - width  (metres) -> Unity local X axis (east when bearing = 0)
- *   - height (metres) -> Unity local Z axis (north when bearing = 0)
+ * The "box" is a georeferenced rectangle that maps onto a flat local metre grid:
+ *   - width  (metres) -> local X axis (east when bearing = 0)
+ *   - height (metres) -> local Z axis (north when bearing = 0)
  *   - bearing (deg, clockwise from north) rotates the rectangle
- *   - terrain origin (0,0) is the box corner that is south-west when bearing = 0
+ *   - the local origin (0,0) is the box corner that is south-west when bearing = 0
  */
 
 export interface LatLon {
@@ -19,7 +18,7 @@ export interface LatLon {
   lon: number;
 }
 
-/** Terrain-local coordinates in metres (Unity X east, Z north, Y up = 0). */
+/** Local coordinates in metres (X east, Z north, Y up = 0 when bearing = 0). */
 export interface LocalXZ {
   x: number;
   z: number;
@@ -305,6 +304,25 @@ export function clipPolygon(points: LocalXZ[], r: Rect): LocalXZ[] {
     }
   }
   return output;
+}
+
+/**
+ * Ray-casting point-in-polygon test. `ring` is a list of lat/lon vertices
+ * (open or closed). Used to clip data to a freehand selection region.
+ */
+export function pointInRing(lat: number, lon: number, ring: LatLon[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i].lon;
+    const yi = ring[i].lat;
+    const xj = ring[j].lon;
+    const yj = ring[j].lat;
+    const intersect =
+      yi > lat !== yj > lat &&
+      lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 export function formatMeters(m: number): string {

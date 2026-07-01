@@ -33,6 +33,26 @@ export default function Toolbar({
         >
           Draw box
         </button>
+        <button
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+            tool === "freedraw"
+              ? "bg-amber-500/20 text-amber-300"
+              : "text-slate-300 hover:bg-panel-3"
+          }`}
+          onClick={() => setTool("freedraw")}
+        >
+          Free draw
+        </button>
+        <button
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+            tool === "measure"
+              ? "bg-emerald-500/20 text-emerald-300"
+              : "text-slate-300 hover:bg-panel-3"
+          }`}
+          onClick={() => setTool("measure")}
+        >
+          Measure
+        </button>
         <div className="mx-1 h-5 w-px bg-edge" />
         <button
           className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${

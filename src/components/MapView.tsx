@@ -13,6 +13,8 @@ import { basemapStyle } from "../lib/basemaps";
 import {
   BoxFrame,
   bearingBetween,
+  distanceMeters,
+  formatMeters,
   type Box,
   type LatLon,
 } from "../lib/geo";
@@ -45,6 +47,54 @@ function boxFeatureCollection(box: Box): GeoJSONFeatureCollection {
         type: "Feature",
         properties: {} as never,
         geometry: { type: "Polygon", coordinates: [ring] },
+      } as never,
+    ],
+  };
+}
+
+function measureFeatureCollection(
+  points: LatLon[],
+  cursor?: LatLon | null,
+): GeoJSONFeatureCollection {
+  const all = cursor ? [...points, cursor] : points;
+  const features: GeoJSONFeatureCollection["features"] = [];
+  if (all.length >= 2) {
+    features.push({
+      type: "Feature",
+      properties: {} as never,
+      geometry: {
+        type: "LineString",
+        coordinates: all.map((p) => [p.lon, p.lat] as [number, number]),
+      },
+    } as never);
+  }
+  for (const p of points) {
+    features.push({
+      type: "Feature",
+      properties: {} as never,
+      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+    } as never);
+  }
+  return { type: "FeatureCollection", features };
+}
+
+function freeFeatureCollection(
+  ring: LatLon[] | null,
+  closed = true,
+): GeoJSONFeatureCollection {
+  if (!ring || ring.length < 2) return EMPTY_FC;
+  const coords = ring.map((p) => [p.lon, p.lat] as [number, number]);
+  if (closed && coords.length >= 3) coords.push(coords[0]);
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {} as never,
+        geometry:
+          closed && coords.length >= 4
+            ? { type: "Polygon", coordinates: [coords] }
+            : { type: "LineString", coordinates: coords },
       } as never,
     ],
   };
@@ -98,9 +148,11 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     | { mode: "rotate" }
     | { mode: "node"; id: string }
     | { mode: "draw"; start: LatLon }
+    | { mode: "freedraw"; points: LatLon[] }
     | null
   >(null);
   const movedRef = useRef(false);
+  const measureMarkerRef = useRef<maplibregl.Marker | null>(null);
 
   useImperativeHandle(ref, () => ({
     setBearing: (deg) => mapRef.current?.setBearing(deg),
@@ -129,6 +181,18 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
     if (!map.getSource("draw-preview")) {
       map.addSource("draw-preview", { type: "geojson", data: EMPTY_FC });
+    }
+    if (!map.getSource("free")) {
+      map.addSource("free", {
+        type: "geojson",
+        data: freeFeatureCollection(useStore.getState().freehand),
+      });
+    }
+    if (!map.getSource("measure")) {
+      map.addSource("measure", {
+        type: "geojson",
+        data: measureFeatureCollection(useStore.getState().measure),
+      });
     }
 
     const lineWidth = (mult: number): maplibregl.ExpressionSpecification =>
@@ -264,6 +328,52 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       });
     }
 
+    // freehand region
+    if (!map.getLayer("free-fill")) {
+      map.addLayer({
+        id: "free-fill",
+        type: "fill",
+        source: "free",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": "#f59e0b", "fill-opacity": 0.12 },
+      });
+    }
+    if (!map.getLayer("free-outline")) {
+      map.addLayer({
+        id: "free-outline",
+        type: "line",
+        source: "free",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#f59e0b", "line-width": 2, "line-dasharray": [2, 1] },
+      });
+    }
+
+    // measure
+    if (!map.getLayer("measure-line")) {
+      map.addLayer({
+        id: "measure-line",
+        type: "line",
+        source: "measure",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#34d399", "line-width": 2.5, "line-dasharray": [2, 1] },
+      });
+    }
+    if (!map.getLayer("measure-pts")) {
+      map.addLayer({
+        id: "measure-pts",
+        type: "circle",
+        source: "measure",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#34d399",
+          "circle-stroke-color": "#0f1419",
+          "circle-stroke-width": 2,
+        },
+      });
+    }
+
     // box
     if (!map.getLayer("box-fill")) {
       map.addLayer({
@@ -333,8 +443,43 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     (map.getSource("box-handles") as GeoJSONSource | undefined)?.setData(
       handlesFeatureCollection(state.box) as never,
     );
+    (map.getSource("free") as GeoJSONSource | undefined)?.setData(
+      freeFeatureCollection(state.freehand) as never,
+    );
+    (map.getSource("measure") as GeoJSONSource | undefined)?.setData(
+      measureFeatureCollection(state.measure) as never,
+    );
+    updateMeasureMarker(map, state.measure);
     updateBoxVisibility(map, state.boxVisible);
     syncSelection(map);
+  }
+
+  function updateMeasureMarker(map: maplibregl.Map, points: LatLon[]) {
+    if (points.length < 2) {
+      measureMarkerRef.current?.remove();
+      measureMarkerRef.current = null;
+      return;
+    }
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+      total += distanceMeters(points[i - 1], points[i]);
+    }
+    const last = points[points.length - 1];
+    if (!measureMarkerRef.current) {
+      const el = document.createElement("div");
+      el.className =
+        "rounded-md border border-emerald-500/50 bg-panel-2/95 px-2 py-0.5 font-mono text-[11px] text-emerald-200 shadow-lg";
+      measureMarkerRef.current = new maplibregl.Marker({
+        element: el,
+        anchor: "bottom",
+        offset: [0, -8],
+      })
+        .setLngLat([last.lon, last.lat])
+        .addTo(map);
+    }
+    const el = measureMarkerRef.current.getElement();
+    el.textContent = formatMeters(total);
+    measureMarkerRef.current.setLngLat([last.lon, last.lat]);
   }
 
   function updateBoxVisibility(map: maplibregl.Map, visible: boolean) {
@@ -372,6 +517,21 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     return { lat: e.lngLat.lat, lon: e.lngLat.lng };
   }
 
+  /**
+   * queryRenderedFeatures throws if any requested layer id is missing, which
+   * happens in the brief window after a basemap style reload before overlays
+   * are re-added. Filter to layers that currently exist.
+   */
+  function queryLayers(
+    map: maplibregl.Map,
+    point: MapMouseEvent["point"],
+    layers: string[],
+  ) {
+    const existing = layers.filter((l) => map.getLayer(l));
+    if (existing.length === 0) return [];
+    return map.queryRenderedFeatures(point, { layers: existing });
+  }
+
   function onMouseDown(map: maplibregl.Map, e: MapMouseEvent) {
     const state = useStore.getState();
     movedRef.current = false;
@@ -383,10 +543,18 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       return;
     }
 
+    if (state.tool === "freedraw") {
+      e.preventDefault();
+      map.dragPan.disable();
+      dragRef.current = { mode: "freedraw", points: [lngLatToLatLon(e)] };
+      return;
+    }
+
+    // In measure mode, clicks add points and drags pan the map normally.
+    if (state.tool === "measure") return;
+
     if (state.boxVisible) {
-      const rotateHit = map.queryRenderedFeatures(e.point, {
-        layers: ["box-rotate-handle"],
-      });
+      const rotateHit = queryLayers(map, e.point, ["box-rotate-handle"]);
       if (rotateHit.length) {
         e.preventDefault();
         map.dragPan.disable();
@@ -397,9 +565,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
     // dragging a selected node
     if (state.selection?.el === "node") {
-      const nodeHit = map.queryRenderedFeatures(e.point, {
-        layers: ["sel-point"],
-      });
+      const nodeHit = queryLayers(map, e.point, ["sel-point"]);
       if (nodeHit.length) {
         e.preventDefault();
         map.dragPan.disable();
@@ -409,9 +575,7 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     }
 
     if (state.boxVisible) {
-      const moveHit = map.queryRenderedFeatures(e.point, {
-        layers: ["box-fill"],
-      });
+      const moveHit = queryLayers(map, e.point, ["box-fill"]);
       if (moveHit.length) {
         e.preventDefault();
         map.dragPan.disable();
@@ -430,13 +594,25 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     if (!drag) {
       // hover cursor feedback
       const tool = useStore.getState().tool;
-      if (tool === "draw") {
+      if (tool === "draw" || tool === "freedraw") {
         map.getCanvas().style.cursor = "crosshair";
         return;
       }
-      const hit = map.queryRenderedFeatures(e.point, {
-        layers: ["box-rotate-handle", "box-fill", ...DATA_LAYERS],
-      });
+      if (tool === "measure") {
+        map.getCanvas().style.cursor = "crosshair";
+        const pts = useStore.getState().measure;
+        if (pts.length > 0) {
+          (map.getSource("measure") as GeoJSONSource | undefined)?.setData(
+            measureFeatureCollection(pts, lngLatToLatLon(e)) as never,
+          );
+        }
+        return;
+      }
+      const hit = queryLayers(map, e.point, [
+        "box-rotate-handle",
+        "box-fill",
+        ...DATA_LAYERS,
+      ]);
       map.getCanvas().style.cursor = hit.length ? "pointer" : "";
       return;
     }
@@ -467,6 +643,21 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
           ],
         };
         (map.getSource("draw-preview") as GeoJSONSource).setData(fc as never);
+        break;
+      }
+      case "freedraw": {
+        const last = drag.points[drag.points.length - 1];
+        // thin the path so we don't store thousands of near-identical points
+        if (
+          !last ||
+          Math.abs(last.lat - cur.lat) > 1e-6 ||
+          Math.abs(last.lon - cur.lon) > 1e-6
+        ) {
+          drag.points.push(cur);
+        }
+        (map.getSource("free") as GeoJSONSource).setData(
+          freeFeatureCollection(drag.points, false) as never,
+        );
         break;
       }
       case "move": {
@@ -509,6 +700,16 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       ) {
         useStore.getState().setBoxFromCorners(drag.start, end);
       }
+    } else if (drag?.mode === "freedraw") {
+      if (drag.points.length >= 3) {
+        useStore.getState().setFreehand(drag.points);
+        useStore.getState().setTool("pan");
+      } else {
+        // too small – discard and restore committed region
+        (map.getSource("free") as GeoJSONSource).setData(
+          freeFeatureCollection(useStore.getState().freehand) as never,
+        );
+      }
     }
     dragRef.current = null;
     map.dragPan.enable();
@@ -516,8 +717,13 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
 
   function onClick(map: maplibregl.Map, e: MapMouseEvent) {
     if (movedRef.current) return;
-    if (useStore.getState().tool === "draw") return;
-    const hits = map.queryRenderedFeatures(e.point, { layers: DATA_LAYERS });
+    const tool = useStore.getState().tool;
+    if (tool === "draw" || tool === "freedraw") return;
+    if (tool === "measure") {
+      useStore.getState().addMeasurePoint(lngLatToLatLon(e));
+      return;
+    }
+    const hits = queryLayers(map, e.point, DATA_LAYERS);
     if (!hits.length) {
       useStore.getState().select(null);
       return;
@@ -536,8 +742,9 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: basemapStyle(state.basemap),
-      center: [state.box.centerLon, state.box.centerLat],
-      zoom: 11,
+      center: [state.view.lng, state.view.lat],
+      zoom: state.view.zoom,
+      bearing: state.view.bearing,
       attributionControl: { compact: true },
       dragRotate: true,
       pitchWithRotate: false,
@@ -553,7 +760,18 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
       addOverlays(map);
       readyRef.current = true;
     });
+    const syncView = () => {
+      const c = map.getCenter();
+      useStore.getState().setView({
+        lng: c.lng,
+        lat: c.lat,
+        zoom: map.getZoom(),
+        bearing: map.getBearing(),
+      });
+    };
     map.on("rotate", () => onBearingChange(map.getBearing()));
+    map.on("move", syncView);
+    map.on("moveend", syncView);
     map.on("mousedown", (e) => onMouseDown(map, e));
     map.on("mousemove", (e) => onMouseMove(map, e));
     map.on("mouseup", (e) => onMouseUp(map, e));
@@ -606,6 +824,47 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [box, boxVisible]);
 
+  // measure updates
+  const measure = useStore((s) => s.measure);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    (map.getSource("measure") as GeoJSONSource | undefined)?.setData(
+      measureFeatureCollection(measure) as never,
+    );
+    updateMeasureMarker(map, measure);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measure]);
+
+  // view commands (numeric inputs / search / permalink)
+  const viewCommand = useStore((s) => s.viewCommand);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !viewCommand) return;
+    const v = viewCommand.view;
+    map.easeTo({
+      center:
+        v.lng != null && v.lat != null
+          ? [v.lng, v.lat]
+          : v.lat != null || v.lng != null
+            ? [v.lng ?? map.getCenter().lng, v.lat ?? map.getCenter().lat]
+            : map.getCenter(),
+      zoom: v.zoom ?? map.getZoom(),
+      bearing: v.bearing ?? map.getBearing(),
+      duration: 500,
+    });
+  }, [viewCommand]);
+
+  // freehand region updates
+  const freehand = useStore((s) => s.freehand);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    (map.getSource("free") as GeoJSONSource | undefined)?.setData(
+      freeFeatureCollection(freehand) as never,
+    );
+  }, [freehand]);
+
   // selection updates
   const selection = useStore((s) => s.selection);
   useEffect(() => {
@@ -634,7 +893,8 @@ const MapView = forwardRef<MapHandle, MapViewProps>(function MapView(
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    map.getCanvas().style.cursor = tool === "draw" ? "crosshair" : "";
+    map.getCanvas().style.cursor =
+      tool === "draw" || tool === "freedraw" ? "crosshair" : "";
   }, [tool]);
 
   return <div ref={containerRef} className="absolute inset-0" />;

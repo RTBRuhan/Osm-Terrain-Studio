@@ -2,9 +2,9 @@
  * Headless sanity checks for the geometry + export pipeline.
  * Run with:  npx tsx scripts/selfcheck.ts
  */
-import { BoxFrame, distanceMeters, type Box } from "../src/lib/geo";
+import { BoxFrame, distanceMeters, type Box, type LatLon } from "../src/lib/geo";
 import { emptyOsm, type OsmData } from "../src/lib/osm";
-import { buildUnityExport, clipOsmToBox } from "../src/lib/exports";
+import { clipOsmToBox, clipOsmToPolygon } from "../src/lib/exports";
 
 let failures = 0;
 function assert(name: string, cond: boolean, extra?: unknown) {
@@ -78,12 +78,14 @@ function makeData(): OsmData {
   const data = emptyOsm();
   // A west point far outside (x ~ -5000) and east point far outside (x ~ +10000)
   const west = frame.toLatLonFromLocal(-5000, 5000);
+  const mid = frame.toLatLonFromLocal(2500, 5000);
   const east = frame.toLatLonFromLocal(10000, 5000);
   data.nodes.set("1", { id: "1", lat: west.lat, lon: west.lon, tags: {} });
+  data.nodes.set("3", { id: "3", lat: mid.lat, lon: mid.lon, tags: {} });
   data.nodes.set("2", { id: "2", lat: east.lat, lon: east.lon, tags: {} });
   data.ways.set("10", {
     id: "10",
-    refs: ["1", "2"],
+    refs: ["1", "3", "2"],
     tags: { highway: "primary", name: "Test Road", lanes: "2" },
   });
   return data;
@@ -102,20 +104,37 @@ for (const n of clipped.nodes.values()) {
 }
 assert("clipped road nodes lie within terrain bounds", allInside);
 
-const unity = buildUnityExport(data, box, "roads");
-assert("unity export has exactly one road", unity.roads.length === 1, unity.roads.length);
-const road = unity.roads[0];
-const xs = road.points.map((p) => p.x);
+// The clipped road should span the full width (0..5000) of the box.
+const clippedWay = [...clipped.ways.values()][0];
+const xsLocal = clippedWay.refs
+  .map((r) => clipped.nodes.get(r))
+  .filter((n): n is NonNullable<typeof n> => Boolean(n))
+  .map((n) => clipFrame.toLocal(n.lat, n.lon).x);
 assert(
   "clipped road spans the full 5000 m width",
-  approx(Math.min(...xs), 0, 1) && approx(Math.max(...xs), 5000, 1),
-  xs,
+  approx(Math.min(...xsLocal), 0, 1) && approx(Math.max(...xsLocal), 5000, 1),
+  xsLocal,
 );
-assert("road width derived from lanes (2*3.5=7)", road.width === 7, road.width);
-assert(
-  "terrain size carried into export",
-  unity.terrain.sizeXMeters === 5000 && unity.terrain.sizeZMeters === 10000,
-);
+assert("box bounds carried into clip", clipped.bounds != null);
+
+// --- 4. Freehand polygon clip ---------------------------------------------
+// A small triangle near the centre should keep the road (it passes through).
+const c = { lat: box.centerLat, lon: box.centerLon };
+const tri: LatLon[] = [
+  frame.toLatLonFromLocal(2000, 4000),
+  frame.toLatLonFromLocal(3000, 4000),
+  frame.toLatLonFromLocal(2500, 6000),
+];
+void c;
+const region = clipOsmToPolygon(data, tri);
+assert("freehand region keeps the intersecting road", region.ways.size === 1, region.ways.size);
+// A region far away should keep nothing.
+const farTri: LatLon[] = [
+  frame.toLatLonFromLocal(-50000, -50000),
+  frame.toLatLonFromLocal(-49000, -50000),
+  frame.toLatLonFromLocal(-49500, -49000),
+];
+assert("freehand region far away keeps nothing", clipOsmToPolygon(data, farTri).ways.size === 0);
 
 console.log("");
 if (failures > 0) {
