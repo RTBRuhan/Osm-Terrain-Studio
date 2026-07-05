@@ -154,15 +154,16 @@ Re-export at any time — edits are reflected in every format.
 
 ## Deploy to GitHub Pages
 
-1. Create a repo named **`osm-terrain-studio`** and push this project.
+1. Create a repo (any name) and push this project.
 2. In **Settings → Pages**, set *Source* to **GitHub Actions**.
 3. Push to `main`. The included workflow (`.github/workflows/deploy.yml`) builds
    and deploys automatically.
 
-Using a **different repo name**? The site is served from `/<repo>/`, so set the
-base path: edit the `VITE_BASE` env in the workflow (e.g. `VITE_BASE=/my-name/`)
-or run `VITE_BASE=/my-name/ npm run build`. For a user/org page
-(`<user>.github.io`) or custom domain, use `VITE_BASE=/`.
+The build uses a **relative base path** (`./`), so it works regardless of the
+repo's name — including if you rename the repo later — and whether it's served
+from a project subpath (`/<repo>/`) or a user/org page (`<user>.github.io`) or
+custom domain. No configuration needed. (If you ever do need an absolute base
+for some other host, set the `VITE_BASE` env var.)
 
 ---
 

@@ -27,8 +27,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
-      # GitHub Pages serves from /<repo>/. If your repo name differs from
-      # "osm-terrain-studio", set VITE_BASE here, e.g. VITE_BASE: /my-repo/
+      # `base` is relative ("./") in vite.config.ts, so this works regardless
+      # of the repo name/casing or whether Pages serves from a subpath.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
